@@ -1,0 +1,188 @@
+x-airflow-common: &airflow-common
+  environment:
+    # ====== Airflow Settings ======
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor    
+    env_file: secrets.env
+    AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+    AIRFLOW__WEBSERVER__SECRET_KEY: 07775000
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW_UID: "${AIRFLOW_UID:-50000}"
+    _AIRFLOW_WWW_USER_USERNAME: airflow
+    _AIRFLOW_WWW_USER_PASSWORD: airflow  
+    
+  volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins      
+      - ./secrets.env:/opt/airflow/secrets.env
+  networks:
+    - Loan_ELT_network    
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: Loans_postgres_db
+    restart: always
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow        
+    volumes:
+      - postgres_data:/var/lib/postgresql/data      
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+    - Loan_ELT_network
+
+  # PgAdmin
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: Loan_ELT_pgadmin
+    restart: always
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    networks:
+    - Loan_ELT_network
+
+  # Airflow 2.9.2  
+  airflow-webserver:
+    build: .
+    container_name: Loan_ELT_airflow_webserver
+    <<: *airflow-common
+    command: "webserver"
+    ports:
+      - "8082:8080"
+    depends_on:
+      - postgres      
+      - airflow-init
+
+  airflow-init:
+    build: .
+    <<: *airflow-common   
+    container_name: Loan_ELT_airflow_init    
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    environment:
+      _AIRFLOW_DB_MIGRATE: 'true'
+      _AIRFLOW_WWW_USER_CREATE: 'true'      
+      _AIRFLOW_WWW_USER_EMAIL: 'airflow'
+      _AIRFLOW_WWW_USER_PASSWORD: 'airflow'  
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+    command: >
+      bash -c "
+        airflow db init &&
+        airflow users create \
+          --username airflow \
+          --firstname Airflow \
+          --lastname Admin \
+          --role Admin \
+          --email airflow \
+          --password airflow
+        "    
+  airflow-scheduler:
+    build: .
+    container_name: Loan_ELT_airflow_scheduler
+    <<: *airflow-common
+    command: "scheduler"
+    depends_on:
+      - postgres
+      - airflow-init  
+
+  # ============================
+  # HDFS SERVICES
+  # ============================
+  namenode:
+    build:
+      context: ./spark/namenode
+      dockerfile: Dockerfile
+    container_name: Loan_ELT_namenode
+    restart: always
+    environment:
+      - CLUSTER_NAME=hadoop-cluster
+    ports:
+      - "9870:9870"   # Web UI for Namenode
+      - "9000:9000"   # HDFS RPC
+    volumes:
+      - namenode_data:/hadoop/dfs/name
+    env_file:
+      - ./hadoop.env
+    networks:
+      - Loan_ELT_network
+
+  datanode:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: Loan_ELT_datanode
+    restart: always
+    environment:
+      - CLUSTER_NAME=hadoop-cluster
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+    ports:
+      - "9864:9864"   # Web UI for Datanode
+    volumes:
+      - datanode_data:/hadoop/dfs/data
+    env_file:
+      - ./hadoop.env
+    depends_on:
+      - namenode
+    networks:
+      - Loan_ELT_network
+
+  # ============================
+  # SPARK CLUSTER
+  # ============================
+  spark-master:
+    build:
+      context: ./spark/master
+      dockerfile: Dockerfile
+    container_name: Loan_ELT_spark_master
+    hostname: spark-master
+    environment:
+      - SPARK_MODE=master
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000s
+    ports:
+      - "8080:8080"   # Spark Master UI
+      - "7077:7077"
+    depends_on:
+      - namenode
+    networks:
+      - Loan_ELT_network
+  spark-worker:
+    build:
+      context: ./spark/worker
+      dockerfile: Dockerfile
+    container_name: Loan_ELT_spark_worker
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER=spark://spark-master:7077
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+    ports:
+      - "8081:8081"
+    depends_on:
+      - spark-master
+    networks:
+      - Loan_ELT_network
+
+volumes:
+  postgres_data:
+  pgadmin_data:
+  namenode_data:
+  datanode_data:  
+
+networks:
+  Loan_ELT_network:
+    driver: bridge
