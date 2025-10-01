@@ -3,9 +3,10 @@ from sqlalchemy.exc import SQLAlchemyError
 import logging
 
 
-def postgres_connection(conn_string):
+def postgres_connection(host, db_name, user, password):
 
-    connection_string = conn_string
+    # connection_string = conn_string
+    connection_string = f'postgresql://{user}:{password}@{host}/{db_name}'
 
     try:
         engine = create_engine(connection_string)

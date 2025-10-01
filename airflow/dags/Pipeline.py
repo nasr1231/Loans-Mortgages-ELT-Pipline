@@ -7,8 +7,17 @@ import os
 from dotenv import load_dotenv
 import logging
 
+load_dotenv("/opt/airflow/secrets.env")
     
-connection_string = f'postgresql://airflow:airflow@postgres/financial_data'
+def postgres_credentials():
+    return {
+        'host': os.getenv("POSTGRES_HOST"),
+        'db_name': os.getenv("POSTGRES_DB"),
+        'user': os.getenv("POSTGRES_USER"),
+        'password': os.getenv("POSTGRES_PASSWORD"),
+    }
+
+# connection_string = f'postgresql://airflow:airflow@postgres/financial_data'
 
 default_args = {
     "owner": "airflow-user",
@@ -29,7 +38,8 @@ def Loan_ELT_Pipeline():
     
     @task()        
     def test_postgres_connection():        
-        conn, engine = postgres_connection(connection_string)
+        postgres_cred = postgres_credentials()
+        conn, engine = postgres_connection(**postgres_cred)
         if conn is None or engine is None:
             logging.error("PostgreSQL connection has failed!")
             raise Exception("PostgreSQL connection could not be established.")
@@ -39,8 +49,7 @@ def Loan_ELT_Pipeline():
         
     data_ingestion_sqoop = BashOperator(
         task_id="data_ingestion_sqoop",
-        bash_command="sqoop import --connect jdbc:postgresql://postgres:5432/financial_data --username airflow --password airflow --table financial_loan --target-dir hdfs://namenode:9000/staging-zone-5 --delete-target-dir",
-        dag=dag
+        bash_command="sqoop import --connect jdbc:postgresql://postgres:5432/financial_data --username airflow --password airflow --table financial_loan --target-dir hdfs://namenode:9000/staging-zone-5 --delete-target-dir"        
     )
 
     test_postgres_connection() >> data_ingestion_sqoop
