@@ -1,0 +1,13 @@
+secrets.env
+hadoop.env
+__pycache__
+airflow/logs
+airflow/airflow.db
+airflow/airflow-webserver.pid
+airflow/airflow-scheduler.pid
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+
