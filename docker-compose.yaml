@@ -1,6 +1,6 @@
 x-airflow-common: &airflow-common
   environment:
-    # ====== Airflow Settings ======
+    #       Airflow Settings 
     AIRFLOW__CORE__EXECUTOR: LocalExecutor    
     env_file: ./airflow/secrets.env
     AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
@@ -9,13 +9,13 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW_UID: "${AIRFLOW_UID:-50000}"
     _AIRFLOW_WWW_USER_USERNAME: airflow
-    _AIRFLOW_WWW_USER_PASSWORD: airflow  
-    AIRFLOW__API__AUTH_BACKENDS: "airflow.api.auth.backend.basic_auth"    
+    _AIRFLOW_WWW_USER_PASSWORD: airflow    
   volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
       - ./airflow/plugins:/opt/airflow/plugins      
       - ./airflow/secrets.env:/opt/airflow/secrets.env
+      - //var/run/docker.sock:/var/run/docker.sock
   networks:
     - Loan_ELT_network    
 
@@ -70,7 +70,6 @@ services:
     depends_on:
       - postgres      
       - airflow-init
-
   airflow-init:
     build: .
     <<: *airflow-common   
@@ -107,11 +106,9 @@ services:
       - ./airflow/secrets.env
     depends_on:
       - postgres
-      - airflow-init  
+      - airflow-init      
 
-  # ============================
   # HDFS SERVICES
-  # ============================
   namenode:
     build:
       context: ./spark/namenode
@@ -148,9 +145,8 @@ services:
     networks:
       - Loan_ELT_network
 
-  # ============================
   # SPARK CLUSTER
-  # ============================
+
   spark-master:
     build:
       context: ./spark/master
@@ -182,12 +178,32 @@ services:
       - spark-master
     networks:
       - Loan_ELT_network
-
+  
+  # NiFi Service
+  
+  nifi:
+    image: apache/nifi:1.27.0
+    container_name: Loan_ELT_nifi
+    ports:
+      - "8085:8080"   # Web UI
+    environment:
+      - NIFI_WEB_HTTP_PORT=8080
+      - NIFI_WEB_HTTP_HOST=0.0.0.0    
+    volumes:
+    - ./drivers:/opt/nifi/drivers
+    - nifi_data:/opt/nifi/nifi-current/data
+    - ./hadoop_conf:/opt/hadoop_conf
+    networks:
+      - Loan_ELT_network
+    depends_on:
+      - postgres
+      - namenode
 volumes:
   postgres_data:
   pgadmin_data:
   namenode_data:
   datanode_data:  
+  nifi_data:
 
 networks:
   Loan_ELT_network:
